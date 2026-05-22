@@ -9,6 +9,7 @@ import {
   MapPin, Calendar, Clock, ChevronRight, HelpCircle, UserCheck 
 } from "lucide-react";
 import { createClient } from "@supabase/supabase-js";
+import DiscussionEmbed from "./components/DiscussionEmbed";
 
 // Initialize Supabase Client for client-side persistence and real-time.
 // Reads variables VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.
@@ -528,6 +529,34 @@ export default function App() {
           </div>
         )}
 
+        {/* Disqus Discussion Forum Section */}
+        <div id="disqus-discussion-container" className="mt-12 bg-white rounded-[32px] border border-slate-100 p-6 sm:p-8 shadow-lg shadow-slate-100/50">
+          <div className="border-b border-slate-200 pb-4 mb-6 flex justify-between items-center gap-4 flex-wrap">
+            <div>
+              <h3 className="text-lg font-black font-display text-slate-800 flex items-center gap-2 tracking-tight">
+                <MessageSquare className="h-5 w-5 text-brand-600 animate-pulse" />
+                <span>Groupie Discussion Forum</span>
+              </h3>
+              <p className="text-xs text-slate-400">
+                Ask questions, discuss itineraries, coordinate plans, and leave travel thoughts below!
+              </p>
+            </div>
+            {selectedTrip && (
+              <span className="text-[10px] font-bold text-slate-400 bg-slate-100/80 px-3 py-1.5 rounded-xl border border-slate-200">
+                Active thread: {selectedTrip.name}
+              </span>
+            )}
+          </div>
+          <DiscussionEmbed
+            shortname="groupie"
+            config={{
+              url: window.location.href,
+              identifier: selectedTrip ? `groupie-trip-${selectedTrip.id}` : "groupie-home-discussion",
+              title: selectedTrip ? `Groupie Trip - ${selectedTrip.name}` : "Groupie Consensus Planner Discussion",
+              language: "en"
+            }}
+          />
+        </div>
 
       </main>
 
