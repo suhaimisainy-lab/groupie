@@ -30,6 +30,23 @@ if (supabaseUrl && supabaseAnonKey) {
   console.warn("Supabase credentials not found in env. Falling back to memory & local file.");
 }
 
+// Logging middleware for all API requests to help debug any errors
+app.use((req, res, next) => {
+  if (req.path.startsWith("/api/")) {
+    console.log(`[API REQUEST] ${req.method} ${req.path}`, {
+      query: req.query,
+      body: req.body,
+    });
+    
+    const originalJson = res.json;
+    res.json = function(body: any) {
+      console.log(`[API RESPONSE] ${req.method} ${req.path} STATUS: ${res.statusCode}`, body);
+      return originalJson.call(this, body);
+    };
+  }
+  next();
+});
+
 // Middleware to lazily sync/hydrate database from Supabase on the first API hit per instance lifetime
 app.use(async (req, res, next) => {
   // Only intercept API calls
@@ -177,12 +194,19 @@ let inMemoryDB: any = null;
 async function initDbFromSupabase() {
   if (!supabase) return;
   try {
-    console.log("Fetching database state from Supabase (table: 'entries')...");
-    const { data, error } = await supabase
+    console.log("Fetching database state from Supabase (table: 'entries') with 3.5s timeout...");
+    
+    const dbQueryPromise = supabase
       .from("entries")
       .select()
       .or(`key.eq.${DB_STORAGE_KEY},id.eq.${DB_STORAGE_KEY}`)
       .maybeSingle();
+
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("Supabase request timed out after 3.5 seconds")), 3500)
+    );
+
+    const { data, error } = (await Promise.race([dbQueryPromise, timeoutPromise])) as any;
 
     if (error) {
       console.warn("Supabase database fetch warnings (expected if table is not built yet):", error.message);

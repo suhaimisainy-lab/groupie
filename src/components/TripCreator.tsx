@@ -68,14 +68,18 @@ export default function TripCreator({ isOpen, onClose, organiserId, organiserNam
       });
 
       if (!res.ok) {
-        let errorMsg = "Could not create dynamic group.";
+        let errorMsg = `Could not create dynamic group (Status: ${res.status} ${res.statusText}).`;
         try {
           const errData = await res.json();
-          if (errData.error) errorMsg = errData.error;
+          if (errData.error) {
+            errorMsg = `${errData.error} (Status: ${res.status})`;
+          }
         } catch (e) {
           try {
             const rawText = await res.text();
-            if (rawText) errorMsg = rawText;
+            if (rawText) {
+              errorMsg = `${rawText.substring(0, 100)} (Status: ${res.status})`;
+            }
           } catch (e2) {}
         }
         throw new Error(errorMsg);
