@@ -109,17 +109,73 @@ const QUIZ_QUESTIONS = [
   }
 ];
 
-// Local JSON File-backed Database setup
-const DB_FILE = path.join(process.cwd(), "groupie_db.json");
+import os from "os";
+
+// Find a writable database path. Let's start with the standard path.
+let DB_FILE = path.join(process.cwd(), "groupie_db.json");
+
+// Determine if the standard path is writable or if we should use /tmp
+try {
+  if (fs.existsSync(DB_FILE)) {
+    fs.accessSync(DB_FILE, fs.constants.W_OK);
+  } else {
+    const testPath = path.join(process.cwd(), ".g_write_test_" + Math.random().toString(36).substring(7));
+    fs.writeFileSync(testPath, "test_write");
+    fs.unlinkSync(testPath);
+  }
+  console.log("Database path is writable: " + DB_FILE);
+} catch (e) {
+  const tempDb = path.join(os.tmpdir(), "groupie_db.json");
+  console.warn(`Standard database path is not writable. Redirecting DB writes to writable fallback: ${tempDb}. Error:`, e);
+  
+  // If we had a pre-seeded DB in the read-only working directory, copy it to the writable path so data is preserved!
+  try {
+    const originalDbPath = path.join(process.cwd(), "groupie_db.json");
+    if (fs.existsSync(originalDbPath)) {
+      fs.copyFileSync(originalDbPath, tempDb);
+      console.log("Successfully copied pre-seeded database to writable tmp location:", tempDb);
+    }
+  } catch (copyErr) {
+    console.warn("Failed to copy pre-seeded database to tmp location:", copyErr);
+  }
+  
+  DB_FILE = tempDb;
+}
+
+// Global in-memory DB cache to ensure stability and consistent cross-request state
+let inMemoryDB: any = null;
 
 function readDB() {
+  if (inMemoryDB) {
+    return inMemoryDB;
+  }
+
   try {
     if (fs.existsSync(DB_FILE)) {
       const raw = fs.readFileSync(DB_FILE, "utf-8");
-      return JSON.parse(raw);
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object") {
+        inMemoryDB = parsed;
+        return inMemoryDB;
+      }
     }
   } catch (err) {
-    console.error("DB reading error, recreating", err);
+    console.error("DB reading error from DB_FILE", err);
+  }
+
+  // Fallback read: check the original path if DB_FILE was redirected but copy/read failed
+  try {
+    const originalDbPath = path.join(process.cwd(), "groupie_db.json");
+    if (fs.existsSync(originalDbPath)) {
+      const raw = fs.readFileSync(originalDbPath, "utf-8");
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object") {
+        inMemoryDB = parsed;
+        return inMemoryDB;
+      }
+    }
+  } catch (err) {
+    console.error("DB reading error from original path fallback", err);
   }
 
   // Fallback / Initial Database Seeds
@@ -440,15 +496,21 @@ function readDB() {
     ]
   };
 
-  fs.writeFileSync(DB_FILE, JSON.stringify(defaultDB, null, 2), "utf-8");
+  inMemoryDB = defaultDB;
+  try {
+    fs.writeFileSync(DB_FILE, JSON.stringify(defaultDB, null, 2), "utf-8");
+  } catch (err) {
+    console.error("DB seeding write error", err);
+  }
   return defaultDB;
 }
 
 function writeDB(data: any) {
+  inMemoryDB = data;
   try {
     fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), "utf-8");
   } catch (err) {
-    console.error("DB writing error", err);
+    console.error("DB writing error to disk, cached in-memory", err);
   }
 }
 
@@ -495,9 +557,10 @@ app.get("/api/trips", (req, res) => {
 
   // A traveller is allowed to see the trip if they are in the invited list, the preferred list, or if they are the organiser
   const matchedTrips = db.trips.filter((t: any) => {
-    const isOrganiser = t.organiserId === req.query.uid;
-    const isInvited = Array.isArray(t.invites) && t.invites.some((inv: string) => inv.toLowerCase() === email);
-    const hasPreference = Array.isArray(t.preferences) && t.preferences.some((p: any) => p.email.toLowerCase() === email);
+    if (!t) return false;
+    const isOrganiser = t.organiserId && t.organiserId === req.query.uid;
+    const isInvited = Array.isArray(t.invites) && t.invites.some((inv: any) => typeof inv === 'string' && inv.toLowerCase() === email);
+    const hasPreference = Array.isArray(t.preferences) && t.preferences.some((p: any) => p && typeof p.email === 'string' && p.email.toLowerCase() === email);
     return isOrganiser || isInvited || hasPreference;
   });
 
@@ -506,41 +569,61 @@ app.get("/api/trips", (req, res) => {
 
 // Create new trip
 app.post("/api/trips", (req, res) => {
-  const { name, destination, description, organiserId, organiserName, invites, deadline } = req.body;
-  if (!name || !destination || !organiserId) {
-    return res.status(400).json({ error: "Missing required fields (name, destination, organiserId)." });
+  try {
+    const { name, destination, description, organiserId, organiserName, invites, deadline } = req.body;
+    console.log("POST /api/trips payload received:", { name, destination, description, organiserId, organiserName, invites, deadline });
+    
+    if (!name || !destination) {
+      console.warn("POST /api/trips validation failed: Missing fields", { name, destination });
+      return res.status(400).json({ error: `Missing required fields (name, destination). Received name: "${name}", destination: "${destination}".` });
+    }
+
+    // Auto-heal empty or undefined organiserId/organiserName
+    let resolvedOrganiserId = organiserId;
+    if (!resolvedOrganiserId || resolvedOrganiserId === "undefined" || resolvedOrganiserId === "null") {
+      const alias = (organiserName || "guest").split(" ")[0].toLowerCase().replace(/[^a-z0-9]/g, "");
+      resolvedOrganiserId = "user-" + (alias || "suhaimi");
+    }
+    const safeOrganiserName = organiserName || "Organiser";
+
+    const db = readDB();
+    const safeInvites = Array.isArray(invites) ? invites : [];
+    
+    const newTrip = {
+      id: "trip-" + Math.random().toString(36).substring(2, 11),
+      name,
+      destination,
+      description: description || "",
+      organiserId: resolvedOrganiserId,
+      organiserName: safeOrganiserName,
+      deadline: deadline || new Date(Date.now() + 86400000 * 7).toISOString().slice(0, 16),
+      status: "gathering",
+      invites: Array.from(new Set([safeOrganiserName + "@example.com", ...safeInvites])),
+      preferences: [],
+      consensusThreshold: 75,
+      consensusReached: false,
+      consensusScore: 0,
+      categoryScores: {},
+      generatedItinerary: null,
+      comments: [],
+      votes: {},
+      chatMessages: [],
+      flaggedForLater: []
+    };
+
+    if (!Array.isArray(db.trips)) {
+      db.trips = [];
+    }
+
+    db.trips.push(newTrip);
+    writeDB(db);
+
+    console.log("POST /api/trips created trip successfully:", newTrip.id);
+    return res.json(newTrip);
+  } catch (err: any) {
+    console.error("POST /api/trips internal error:", err);
+    return res.status(500).json({ error: `Server failed to insert new trip: ${err.message || err}` });
   }
-
-  const db = readDB();
-  const safeInvites = Array.isArray(invites) ? invites : [];
-  const safeOrganiserName = organiserName || "Organiser";
-  
-  const newTrip = {
-    id: "trip-" + Math.random().toString(36).substring(2, 11),
-    name,
-    destination,
-    description: description || "",
-    organiserId,
-    organiserName: safeOrganiserName,
-    deadline: deadline || new Date(Date.now() + 86400000 * 7).toISOString().slice(0, 16),
-    status: "gathering",
-    invites: Array.from(new Set([safeOrganiserName + "@example.com", ...safeInvites])),
-    preferences: [],
-    consensusThreshold: 75,
-    consensusReached: false,
-    consensusScore: 0,
-    categoryScores: {},
-    generatedItinerary: null,
-    comments: [],
-    votes: {},
-    chatMessages: [],
-    flaggedForLater: []
-  };
-
-  db.trips.push(newTrip);
-  writeDB(db);
-
-  res.json(newTrip);
 });
 
 // Add traveler invite

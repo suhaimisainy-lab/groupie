@@ -39,6 +39,15 @@ export default function App() {
     if (stored) {
       try {
         const userObj: User = JSON.parse(stored);
+        if (userObj) {
+          if (!userObj.uid) {
+            userObj.uid = "user-" + (userObj.name || "guest").split(" ")[0].toLowerCase().replace(/[^a-z0-9]/g, "");
+          }
+          if (!userObj.avatar) {
+            userObj.avatar = `https://api.dicebear.com/7.x/pixel-art/svg?seed=${encodeURIComponent(userObj.email || "guest")}`;
+          }
+          localStorage.setItem("groupie_user", JSON.stringify(userObj));
+        }
         setCurrentUser(userObj);
       } catch (err) {
         localStorage.removeItem("groupie_user");
