@@ -6,3 +6,5 @@ coverage/
 *.log
 .env*
 !.env.example
+groupie_db.json
+groupie_db.json.*

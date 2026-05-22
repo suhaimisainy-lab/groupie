@@ -4,6 +4,7 @@ import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
+import { createClient } from "@supabase/supabase-js";
 
 dotenv.config();
 
@@ -11,6 +12,34 @@ const app = express();
 const PORT = 3000;
 
 app.use(express.json());
+
+// Initialize Supabase Client
+const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || "";
+const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || "";
+const DB_STORAGE_KEY = "groupie_cloud_db";
+
+let supabase: any = null;
+if (supabaseUrl && supabaseAnonKey) {
+  try {
+    supabase = createClient(supabaseUrl, supabaseAnonKey);
+    console.log("Supabase client initialized successfully.");
+  } catch (err) {
+    console.error("Failed to initialize Supabase client:", err);
+  }
+} else {
+  console.warn("Supabase credentials not found in env. Falling back to memory & local file.");
+}
+
+// Middleware to lazily sync/hydrate database from Supabase on the first API hit per instance lifetime
+app.use(async (req, res, next) => {
+  // Only intercept API calls
+  if (req.path.startsWith("/api/")) {
+    if (!inMemoryDB && supabase) {
+      await initDbFromSupabase();
+    }
+  }
+  next();
+});
 
 // Lazy-initialized Gemini client
 let aiInstance: GoogleGenAI | null = null;
@@ -145,7 +174,96 @@ try {
 // Global in-memory DB cache to ensure stability and consistent cross-request state
 let inMemoryDB: any = null;
 
+async function initDbFromSupabase() {
+  if (!supabase) return;
+  try {
+    console.log("Fetching database state from Supabase (table: 'entries')...");
+    const { data, error } = await supabase
+      .from("entries")
+      .select()
+      .or(`key.eq.${DB_STORAGE_KEY},id.eq.${DB_STORAGE_KEY}`)
+      .maybeSingle();
+
+    if (error) {
+      console.warn("Supabase database fetch warnings (expected if table is not built yet):", error.message);
+      loadLocalDB();
+      return;
+    }
+
+    if (data) {
+      const val = data.value !== undefined ? data.value : data.data;
+      if (val) {
+        const parsed = typeof val === "string" ? JSON.parse(val) : val;
+        if (parsed && typeof parsed === "object") {
+          if (!Array.isArray(parsed.users)) parsed.users = [];
+          if (!Array.isArray(parsed.trips)) parsed.trips = [];
+          inMemoryDB = parsed;
+          console.log("Successfully restored database state from Supabase.");
+          return;
+        }
+      }
+    }
+    
+    console.log("No existing record found in Supabase for key:", DB_STORAGE_KEY);
+    loadLocalDB();
+    // Background create/seed Supabase row in entries table
+    const initialPayload = { key: DB_STORAGE_KEY, id: DB_STORAGE_KEY, value: inMemoryDB, data: inMemoryDB };
+    supabase.from("entries").upsert(initialPayload)
+      .then(({ error }: any) => { if (error) console.error("Supabase initial seeding error:", error); })
+      .catch((err: any) => console.error("Supabase seeding rejected:", err));
+  } catch (err) {
+    console.error("Critical error inside initDbFromSupabase, falling back to local file:", err);
+    loadLocalDB();
+  }
+}
+
+function loadLocalDB() {
+  if (inMemoryDB) return;
+  try {
+    if (fs.existsSync(DB_FILE)) {
+      const raw = fs.readFileSync(DB_FILE, "utf-8");
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object") {
+        if (!Array.isArray(parsed.users)) parsed.users = [];
+        if (!Array.isArray(parsed.trips)) parsed.trips = [];
+        inMemoryDB = parsed;
+        return;
+      }
+    }
+  } catch (err) {
+    console.error("DB reading error from DB_FILE block", err);
+  }
+
+  try {
+    const originalDbPath = path.join(process.cwd(), "groupie_db.json");
+    if (fs.existsSync(originalDbPath)) {
+      const raw = fs.readFileSync(originalDbPath, "utf-8");
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object") {
+        if (!Array.isArray(parsed.users)) parsed.users = [];
+        if (!Array.isArray(parsed.trips)) parsed.trips = [];
+        inMemoryDB = parsed;
+        return;
+      }
+    }
+  } catch (err) {
+    console.error("DB reading error from original fallback", err);
+  }
+
+  inMemoryDB = getDefaultDatabaseSeeds();
+}
+
 function readDB() {
+  if (inMemoryDB) {
+    if (!Array.isArray(inMemoryDB.users)) inMemoryDB.users = [];
+    if (!Array.isArray(inMemoryDB.trips)) inMemoryDB.trips = [];
+    return inMemoryDB;
+  }
+  loadLocalDB();
+  return inMemoryDB;
+}
+
+function getDefaultDatabaseSeeds() {
   if (inMemoryDB) {
     if (!Array.isArray(inMemoryDB.users)) inMemoryDB.users = [];
     if (!Array.isArray(inMemoryDB.trips)) inMemoryDB.trips = [];
@@ -516,7 +634,22 @@ function writeDB(data: any) {
   try {
     fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), "utf-8");
   } catch (err) {
-    console.error("DB writing error to disk, cached in-memory", err);
+    console.warn("Local file DB write warning (this is normal and safely bypassed on Vercel/serverless environments):", err);
+  }
+
+  if (supabase) {
+    const payload = { key: DB_STORAGE_KEY, id: DB_STORAGE_KEY, value: data, data: data };
+    supabase.from("entries").upsert(payload)
+      .then(({ error }: any) => {
+        if (error) {
+          console.error("Supabase background save warning (ensure your 'entries' table is created with columns 'id' / 'key' (text pk) and 'value' / 'data' (jsonb)):", error.message);
+        } else {
+          console.log("Supabase background sync completed successfully.");
+        }
+      })
+      .catch((err: any) => {
+        console.error("Supabase background sync critical error:", err);
+      });
   }
 }
 

@@ -8,6 +8,13 @@ import {
   Compass, Plus, LogOut, Sparkles, MessageSquare, Flame, 
   MapPin, Calendar, Clock, ChevronRight, HelpCircle, UserCheck 
 } from "lucide-react";
+import { createClient } from "@supabase/supabase-js";
+
+// Initialize Supabase Client for client-side persistence and real-time.
+// Reads variables VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.
+const supabaseUrl = (import.meta as any).env?.VITE_SUPABASE_URL || "";
+const supabaseAnonKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || "";
+const supabase = (supabaseUrl && supabaseAnonKey) ? createClient(supabaseUrl, supabaseAnonKey) : null;
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -25,44 +32,66 @@ export default function App() {
   // App-wide data fetching loader
   const [loading, setLoading] = useState(false);
 
-  // Parse invite links or previous sessions
+  // Parse invite links or previous sessions from Supabase Postgres
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const invite = params.get("invite");
-    const trip = params.get("tripId");
-    if (invite) setInviteEmail(invite);
-    if (trip) setInviteTripId(trip);
+    const loadSession = async () => {
+      const params = new URLSearchParams(window.location.search);
+      const invite = params.get("invite");
+      const trip = params.get("tripId");
+      if (invite) setInviteEmail(invite);
+      if (trip) setInviteTripId(trip);
 
-    // Auto load last session
-    const stored = localStorage.getItem("groupie_user");
-    const wasLoggedOut = sessionStorage.getItem("logged_out");
-    if (stored) {
-      try {
-        const userObj: User = JSON.parse(stored);
-        if (userObj) {
-          if (!userObj.uid) {
-            userObj.uid = "user-" + (userObj.name || "guest").split(" ")[0].toLowerCase().replace(/[^a-z0-9]/g, "");
-          }
-          if (!userObj.avatar) {
-            userObj.avatar = `https://api.dicebear.com/7.x/pixel-art/svg?seed=${encodeURIComponent(userObj.email || "guest")}`;
-          }
-          localStorage.setItem("groupie_user", JSON.stringify(userObj));
-        }
-        setCurrentUser(userObj);
-      } catch (err) {
-        localStorage.removeItem("groupie_user");
+      // We maintain the browser session identifier in sessionStorage
+      let sessionKey = sessionStorage.getItem("groupie_session_id");
+      if (!sessionKey) {
+        sessionKey = "sess_" + Math.random().toString(36).substring(2, 15);
+        sessionStorage.setItem("groupie_session_id", sessionKey);
       }
-    } else if (!wasLoggedOut) {
-      // Auto-populate default Host session for a flawless instant experience on first view
-      const defaultUser: User = {
-        uid: "user-suhaimi",
-        email: "SuhaimiSainy@gmail.com",
-        name: "Suhaimi",
-        provider: "guest",
-        avatar: "https://api.dicebear.com/7.x/pixel-art/svg?seed=suhaimi"
-      };
-      setCurrentUser(defaultUser);
-    }
+
+      const wasLoggedOut = sessionStorage.getItem("logged_out");
+      let storedUser: User | null = null;
+
+      if (supabase) {
+        try {
+          const { data: entryData, error: entryError } = await supabase
+            .from("entries")
+            .select()
+            .eq("id", `groupie_user_${sessionKey}`)
+            .maybeSingle();
+
+          if (!entryError && entryData) {
+            const val = entryData.value !== undefined ? entryData.value : entryData.data;
+            if (val) {
+              storedUser = typeof val === "string" ? JSON.parse(val) : val;
+            }
+          }
+        } catch (err) {
+          console.error("Failed to restore user session from Supabase:", err);
+        }
+      }
+
+      if (storedUser) {
+        if (!storedUser.uid) {
+          storedUser.uid = "user-" + (storedUser.name || "guest").split(" ")[0].toLowerCase().replace(/[^a-z0-9]/g, "");
+        }
+        if (!storedUser.avatar) {
+          storedUser.avatar = `https://api.dicebear.com/7.x/pixel-art/svg?seed=${encodeURIComponent(storedUser.email || "guest")}`;
+        }
+        setCurrentUser(storedUser);
+      } else if (!wasLoggedOut) {
+        // Auto-populate default Host session for a flawless instant experience on first view
+        const defaultUser: User = {
+          uid: "user-suhaimi",
+          email: "SuhaimiSainy@gmail.com",
+          name: "Suhaimi",
+          provider: "guest",
+          avatar: "https://api.dicebear.com/7.x/pixel-art/svg?seed=suhaimi"
+        };
+        setCurrentUser(defaultUser);
+      }
+    };
+
+    loadSession();
   }, []);
 
   const refreshTrips = async () => {
@@ -74,16 +103,28 @@ export default function App() {
       if (res.ok) {
         let serverTrips = await res.json();
 
-        // 2. Load cached local trips backup
+        // 2. Load cached local trips backup from Supabase entries table
         const localKey = `groupie_local_trips_${currentUser.email.toLowerCase()}`;
-        const storedStr = localStorage.getItem(localKey);
         let localTrips: Trip[] = [];
-        if (storedStr) {
+        if (supabase) {
           try {
-            localTrips = JSON.parse(storedStr);
-            if (!Array.isArray(localTrips)) localTrips = [];
+            const { data: entryData, error: entryError } = await supabase
+              .from("entries")
+              .select()
+              .eq("id", localKey)
+              .maybeSingle();
+
+            if (!entryError && entryData) {
+              const val = entryData.value !== undefined ? entryData.value : entryData.data;
+              if (val) {
+                const parsed = typeof val === "string" ? JSON.parse(val) : val;
+                if (Array.isArray(parsed)) {
+                  localTrips = parsed;
+                }
+              }
+            }
           } catch (e) {
-            localTrips = [];
+            console.error("Failed to load local cached trips from Supabase table 'entries':", e);
           }
         }
 
@@ -109,7 +150,23 @@ export default function App() {
 
         // 4. Update memory cache and list elements
         setTrips(serverTrips);
-        localStorage.setItem(localKey, JSON.stringify(serverTrips));
+        if (supabase) {
+          const payload = { id: localKey, key: localKey, value: serverTrips, data: serverTrips };
+          supabase.from("entries")
+            .upsert(payload)
+            .then(
+              ({ error }) => {
+                if (error) {
+                  console.error("Failed to sync backup trips to Supabase table 'entries':", error.message);
+                } else {
+                  console.log("Successfully backed up local trips to Supabase 'entries' table.");
+                }
+              },
+              (err) => {
+                console.error("Supabase backup error:", err);
+              }
+            );
+        }
 
         // Update active selected trip in real-time if it matches
         if (selectedTrip) {
@@ -124,10 +181,61 @@ export default function App() {
     }
   };
 
-  // Fetch trips when user authenticates
+  // Real-time live synchronization using Supabase .channel().on()
+  useEffect(() => {
+    if (!supabase || !currentUser) return;
+
+    console.log("Subscribing to real-time updates for table 'entries'...");
+    const channel = supabase
+      .channel("live_entries_sync")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "entries"
+        },
+        (payload) => {
+          console.log("Real-time PostgreSQL change detected in entries Table:", payload);
+          // When a change is detected, refresh UI instantly
+          refreshTrips();
+        }
+      )
+      .subscribe((status) => {
+        console.log("Supabase subscription status:", status);
+      });
+
+    return () => {
+      console.log("Unsubscribing from real-time updates...");
+      supabase.removeChannel(channel);
+    };
+  }, [currentUser]);
+
+  // Fetch trips when user authenticates and save active session to Supabase Postgres
   useEffect(() => {
     if (currentUser) {
-      localStorage.setItem("groupie_user", JSON.stringify(currentUser));
+      let sessionKey = sessionStorage.getItem("groupie_session_id");
+      if (!sessionKey) {
+        sessionKey = "sess_" + Math.random().toString(36).substring(2, 15);
+        sessionStorage.setItem("groupie_session_id", sessionKey);
+      }
+
+      if (supabase) {
+        const payload = {
+          id: `groupie_user_${sessionKey}`,
+          key: `groupie_user_${sessionKey}`,
+          value: currentUser,
+          data: currentUser
+        };
+        supabase.from("entries")
+          .upsert(payload)
+          .then(({ error }) => {
+            if (error) {
+              console.error("Failed to sync active user session to Supabase entries table:", error.message);
+            }
+          });
+      }
+
       refreshTrips().then(() => {
         // If they had an invite link, open that specific trip automatically
         if (inviteTripId) {
@@ -164,7 +272,17 @@ export default function App() {
   };
 
   const handleSignOut = () => {
-    localStorage.removeItem("groupie_user");
+    const sessionKey = sessionStorage.getItem("groupie_session_id");
+    if (sessionKey && supabase) {
+      supabase.from("entries")
+        .delete()
+        .eq("id", `groupie_user_${sessionKey}`)
+        .then(({ error }) => {
+          if (error) {
+            console.error("Failed to delete user session in Supabase:", error.message);
+          }
+        });
+    }
     sessionStorage.setItem("logged_out", "true");
     setCurrentUser(null);
   };
