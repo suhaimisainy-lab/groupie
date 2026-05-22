@@ -69,19 +69,56 @@ export default function App() {
     if (!currentUser) return;
     setLoading(true);
     try {
+      // 1. Fetch server records
       const res = await fetch(`/api/trips?email=${encodeURIComponent(currentUser.email)}&uid=${currentUser.uid}`);
       if (res.ok) {
-        const data = await res.json();
-        setTrips(data);
-        
+        let serverTrips = await res.json();
+
+        // 2. Load cached local trips backup
+        const localKey = `groupie_local_trips_${currentUser.email.toLowerCase()}`;
+        const storedStr = localStorage.getItem(localKey);
+        let localTrips: Trip[] = [];
+        if (storedStr) {
+          try {
+            localTrips = JSON.parse(storedStr);
+            if (!Array.isArray(localTrips)) localTrips = [];
+          } catch (e) {
+            localTrips = [];
+          }
+        }
+
+        // 3. Resync any locally cached trips missing from the server instance (e.g. server restarts)
+        const missingOnServer = localTrips.filter((lt) => !serverTrips.some((st: any) => st.id === lt.id));
+        if (missingOnServer.length > 0) {
+          console.log("Resynced local backup trips to serverless host:", missingOnServer.map(m => m.id));
+          try {
+            await fetch("/api/trips/sync", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ trips: localTrips })
+            });
+            // Update cache after sync
+            const refetchRes = await fetch(`/api/trips?email=${encodeURIComponent(currentUser.email)}&uid=${currentUser.uid}`);
+            if (refetchRes.ok) {
+              serverTrips = await refetchRes.json();
+            }
+          } catch (syncErr) {
+            console.error("Transparent sync failed:", syncErr);
+          }
+        }
+
+        // 4. Update memory cache and list elements
+        setTrips(serverTrips);
+        localStorage.setItem(localKey, JSON.stringify(serverTrips));
+
         // Update active selected trip in real-time if it matches
         if (selectedTrip) {
-          const updated = data.find((t: Trip) => t.id === selectedTrip.id);
+          const updated = serverTrips.find((t: Trip) => t.id === selectedTrip.id);
           if (updated) setSelectedTrip(updated);
         }
       }
     } catch (err) {
-      console.error("Error loaded groupie trips", err);
+      console.error("Error loading groupie trips", err);
     } finally {
       setLoading(false);
     }

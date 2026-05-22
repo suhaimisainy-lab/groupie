@@ -147,6 +147,8 @@ let inMemoryDB: any = null;
 
 function readDB() {
   if (inMemoryDB) {
+    if (!Array.isArray(inMemoryDB.users)) inMemoryDB.users = [];
+    if (!Array.isArray(inMemoryDB.trips)) inMemoryDB.trips = [];
     return inMemoryDB;
   }
 
@@ -155,6 +157,8 @@ function readDB() {
       const raw = fs.readFileSync(DB_FILE, "utf-8");
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed === "object") {
+        if (!Array.isArray(parsed.users)) parsed.users = [];
+        if (!Array.isArray(parsed.trips)) parsed.trips = [];
         inMemoryDB = parsed;
         return inMemoryDB;
       }
@@ -170,6 +174,8 @@ function readDB() {
       const raw = fs.readFileSync(originalDbPath, "utf-8");
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed === "object") {
+        if (!Array.isArray(parsed.users)) parsed.users = [];
+        if (!Array.isArray(parsed.trips)) parsed.trips = [];
         inMemoryDB = parsed;
         return inMemoryDB;
       }
@@ -565,6 +571,50 @@ app.get("/api/trips", (req, res) => {
   });
 
   res.json(matchedTrips);
+});
+
+// Sync local client-side trips with server-side database (serverless resiliency)
+app.post("/api/trips/sync", (req, res) => {
+  try {
+    const { trips: clientTrips } = req.body;
+    if (!Array.isArray(clientTrips)) {
+      return res.status(400).json({ error: "Invalid sync format" });
+    }
+
+    const db = readDB();
+    let modified = false;
+
+    for (const ct of clientTrips) {
+      if (!ct || !ct.id) continue;
+      const index = db.trips.findIndex((t: any) => t.id === ct.id);
+      if (index === -1) {
+        db.trips.push(ct);
+        modified = true;
+      } else {
+        // If the client trip is newer, or has more preferences / comments / chat messages, update it!
+        const serverTrip = db.trips[index];
+        const clientPrefCount = Array.isArray(ct.preferences) ? ct.preferences.length : 0;
+        const serverPrefCount = Array.isArray(serverTrip.preferences) ? serverTrip.preferences.length : 0;
+        
+        const clientChatCount = Array.isArray(ct.chatMessages) ? ct.chatMessages.length : 0;
+        const serverChatCount = Array.isArray(serverTrip.chatMessages) ? serverTrip.chatMessages.length : 0;
+
+        if (clientPrefCount > serverPrefCount || clientChatCount > serverChatCount || (ct.consensusReached && !serverTrip.consensusReached)) {
+          db.trips[index] = { ...serverTrip, ...ct };
+          modified = true;
+        }
+      }
+    }
+
+    if (modified) {
+      writeDB(db);
+    }
+
+    res.json({ success: true, count: db.trips.length });
+  } catch (err: any) {
+    console.error("Sync error in POST /api/trips/sync:", err);
+    res.status(500).json({ error: err.message || err });
+  }
 });
 
 // Create new trip
@@ -1178,4 +1228,8 @@ async function startServer() {
   });
 }
 
-startServer();
+if (!process.env.VERCEL) {
+  startServer();
+}
+
+export default app;
