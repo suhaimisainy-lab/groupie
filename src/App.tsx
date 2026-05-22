@@ -57,11 +57,11 @@ export default function App() {
           const { data: entryData, error: entryError } = await supabase
             .from("entries")
             .select()
-            .eq("id", `groupie_user_${sessionKey}`)
+            .eq("author", `groupie_user_${sessionKey}`)
             .maybeSingle();
 
           if (!entryError && entryData) {
-            const val = entryData.value !== undefined ? entryData.value : entryData.data;
+            const val = entryData.user_input;
             if (val) {
               storedUser = typeof val === "string" ? JSON.parse(val) : val;
             }
@@ -112,11 +112,11 @@ export default function App() {
             const { data: entryData, error: entryError } = await supabase
               .from("entries")
               .select()
-              .eq("id", localKey)
+              .eq("author", localKey)
               .maybeSingle();
 
             if (!entryError && entryData) {
-              const val = entryData.value !== undefined ? entryData.value : entryData.data;
+              const val = entryData.user_input;
               if (val) {
                 const parsed = typeof val === "string" ? JSON.parse(val) : val;
                 if (Array.isArray(parsed)) {
@@ -152,21 +152,25 @@ export default function App() {
         // 4. Update memory cache and list elements
         setTrips(serverTrips);
         if (supabase) {
-          const payload = { id: localKey, key: localKey, value: serverTrips, data: serverTrips };
-          supabase.from("entries")
-            .upsert(payload)
-            .then(
-              ({ error }) => {
-                if (error) {
-                  console.error("Failed to sync backup trips to Supabase table 'entries':", error.message);
-                } else {
-                  console.log("Successfully backed up local trips to Supabase 'entries' table.");
-                }
-              },
-              (err) => {
-                console.error("Supabase backup error:", err);
+          supabase.from("entries").select("id").eq("author", localKey).maybeSingle()
+            .then(({ data: existing }: any) => {
+              const valStr = JSON.stringify(serverTrips);
+              if (existing && existing.id) {
+                supabase.from("entries").update({ user_input: valStr }).eq("id", existing.id)
+                  .then(({ error }) => {
+                    if (error) console.error("Failed to update local backup trips in 'entries':", error.message);
+                    else console.log("Successfully updated local trips backup in Supabase.");
+                  });
+              } else {
+                supabase.from("entries").insert({ author: localKey, user_input: valStr })
+                  .then(({ error }) => {
+                    if (error) console.error("Failed to insert local backup trips in 'entries':", error.message);
+                    else console.log("Successfully backed up local trips to Supabase 'entries' table.");
+                  });
               }
-            );
+            }, (err) => {
+              console.error("Supabase backup select error:", err);
+            });
         }
 
         // Update active selected trip in real-time if it matches
@@ -222,17 +226,20 @@ export default function App() {
       }
 
       if (supabase) {
-        const payload = {
-          id: `groupie_user_${sessionKey}`,
-          key: `groupie_user_${sessionKey}`,
-          value: currentUser,
-          data: currentUser
-        };
-        supabase.from("entries")
-          .upsert(payload)
-          .then(({ error }) => {
-            if (error) {
-              console.error("Failed to sync active user session to Supabase entries table:", error.message);
+        const sessionAuthKey = `groupie_user_${sessionKey}`;
+        supabase.from("entries").select("id").eq("author", sessionAuthKey).maybeSingle()
+          .then(({ data: existing }: any) => {
+            const valStr = JSON.stringify(currentUser);
+            if (existing && existing.id) {
+              supabase.from("entries").update({ user_input: valStr }).eq("id", existing.id)
+                .then(({ error }) => {
+                  if (error) console.error("Failed to update active user session:", error.message);
+                });
+            } else {
+              supabase.from("entries").insert({ author: sessionAuthKey, user_input: valStr })
+                .then(({ error }) => {
+                  if (error) console.error("Failed to insert active user session:", error.message);
+                });
             }
           });
       }
@@ -277,7 +284,7 @@ export default function App() {
     if (sessionKey && supabase) {
       supabase.from("entries")
         .delete()
-        .eq("id", `groupie_user_${sessionKey}`)
+        .eq("author", `groupie_user_${sessionKey}`)
         .then(({ error }) => {
           if (error) {
             console.error("Failed to delete user session in Supabase:", error.message);

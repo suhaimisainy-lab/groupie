@@ -198,8 +198,8 @@ async function initDbFromSupabase() {
     
     const dbQueryPromise = supabase
       .from("entries")
-      .select()
-      .or(`key.eq.${DB_STORAGE_KEY},id.eq.${DB_STORAGE_KEY}`)
+      .select("*")
+      .eq("author", DB_STORAGE_KEY)
       .maybeSingle();
 
     const timeoutPromise = new Promise((_, reject) =>
@@ -215,7 +215,7 @@ async function initDbFromSupabase() {
     }
 
     if (data) {
-      const val = data.value !== undefined ? data.value : data.data;
+      const val = data.user_input;
       if (val) {
         const parsed = typeof val === "string" ? JSON.parse(val) : val;
         if (parsed && typeof parsed === "object") {
@@ -231,8 +231,8 @@ async function initDbFromSupabase() {
     console.log("No existing record found in Supabase for key:", DB_STORAGE_KEY);
     loadLocalDB();
     // Background create/seed Supabase row in entries table
-    const initialPayload = { key: DB_STORAGE_KEY, id: DB_STORAGE_KEY, value: inMemoryDB, data: inMemoryDB };
-    supabase.from("entries").upsert(initialPayload)
+    const initialPayload = { author: DB_STORAGE_KEY, user_input: JSON.stringify(inMemoryDB) };
+    supabase.from("entries").insert(initialPayload)
       .then(({ error }: any) => { if (error) console.error("Supabase initial seeding error:", error); })
       .catch((err: any) => console.error("Supabase seeding rejected:", err));
   } catch (err) {
@@ -662,17 +662,29 @@ function writeDB(data: any) {
   }
 
   if (supabase) {
-    const payload = { key: DB_STORAGE_KEY, id: DB_STORAGE_KEY, value: data, data: data };
-    supabase.from("entries").upsert(payload)
-      .then(({ error }: any) => {
-        if (error) {
-          console.error("Supabase background save warning (ensure your 'entries' table is created with columns 'id' / 'key' (text pk) and 'value' / 'data' (jsonb)):", error.message);
+    supabase.from("entries").select("id").eq("author", DB_STORAGE_KEY).maybeSingle()
+      .then(({ data: existing, error: selectErr }: any) => {
+        if (selectErr) {
+          console.error("Supabase select query error in writeDB:", selectErr.message);
+          return;
+        }
+        const valString = JSON.stringify(data);
+        if (existing && existing.id) {
+          supabase.from("entries").update({ user_input: valString }).eq("id", existing.id)
+            .then(({ error }: any) => {
+              if (error) console.error("Supabase update error in writeDB:", error.message);
+              else console.log("Supabase database updated successfully in background.");
+            });
         } else {
-          console.log("Supabase background sync completed successfully.");
+          supabase.from("entries").insert({ author: DB_STORAGE_KEY, user_input: valString })
+            .then(({ error }: any) => {
+              if (error) console.error("Supabase insert error in writeDB:", error.message);
+              else console.log("Supabase database inserted successfully in background.");
+            });
         }
       })
       .catch((err: any) => {
-        console.error("Supabase background sync critical error:", err);
+        console.error("Supabase operation caught error in writeDB:", err);
       });
   }
 }
