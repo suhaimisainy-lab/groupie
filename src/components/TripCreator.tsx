@@ -67,7 +67,19 @@ export default function TripCreator({ isOpen, onClose, organiserId, organiserNam
         })
       });
 
-      if (!res.ok) throw new Error("Could not create dynamic group.");
+      if (!res.ok) {
+        let errorMsg = "Could not create dynamic group.";
+        try {
+          const errData = await res.json();
+          if (errData.error) errorMsg = errData.error;
+        } catch (e) {
+          try {
+            const rawText = await res.text();
+            if (rawText) errorMsg = rawText;
+          } catch (e2) {}
+        }
+        throw new Error(errorMsg);
+      }
       
       onTripCreated();
       onClose();

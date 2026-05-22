@@ -496,8 +496,8 @@ app.get("/api/trips", (req, res) => {
   // A traveller is allowed to see the trip if they are in the invited list, the preferred list, or if they are the organiser
   const matchedTrips = db.trips.filter((t: any) => {
     const isOrganiser = t.organiserId === req.query.uid;
-    const isInvited = t.invites.some((inv: string) => inv.toLowerCase() === email);
-    const hasPreference = t.preferences.some((p: any) => p.email.toLowerCase() === email);
+    const isInvited = Array.isArray(t.invites) && t.invites.some((inv: string) => inv.toLowerCase() === email);
+    const hasPreference = Array.isArray(t.preferences) && t.preferences.some((p: any) => p.email.toLowerCase() === email);
     return isOrganiser || isInvited || hasPreference;
   });
 
@@ -512,16 +512,19 @@ app.post("/api/trips", (req, res) => {
   }
 
   const db = readDB();
+  const safeInvites = Array.isArray(invites) ? invites : [];
+  const safeOrganiserName = organiserName || "Organiser";
+  
   const newTrip = {
     id: "trip-" + Math.random().toString(36).substring(2, 11),
     name,
     destination,
     description: description || "",
     organiserId,
-    organiserName,
+    organiserName: safeOrganiserName,
     deadline: deadline || new Date(Date.now() + 86400000 * 7).toISOString().slice(0, 16),
     status: "gathering",
-    invites: Array.from(new Set([organiserName + "@example.com", ...invites])),
+    invites: Array.from(new Set([safeOrganiserName + "@example.com", ...safeInvites])),
     preferences: [],
     consensusThreshold: 75,
     consensusReached: false,
