@@ -35,6 +35,7 @@ export default function App() {
 
     // Auto load last session
     const stored = localStorage.getItem("groupie_user");
+    const wasLoggedOut = sessionStorage.getItem("logged_out");
     if (stored) {
       try {
         const userObj: User = JSON.parse(stored);
@@ -42,6 +43,16 @@ export default function App() {
       } catch (err) {
         localStorage.removeItem("groupie_user");
       }
+    } else if (!wasLoggedOut) {
+      // Auto-populate default Host session for a flawless instant experience on first view
+      const defaultUser: User = {
+        uid: "user-suhaimi",
+        email: "SuhaimiSainy@gmail.com",
+        name: "Suhaimi",
+        provider: "guest",
+        avatar: "https://api.dicebear.com/7.x/pixel-art/svg?seed=suhaimi"
+      };
+      setCurrentUser(defaultUser);
     }
   }, []);
 
@@ -100,6 +111,7 @@ export default function App() {
   }, [currentUser]);
 
   const handleSignIn = (user: User) => {
+    sessionStorage.removeItem("logged_out");
     setCurrentUser(user);
     setInviteEmail(null);
     setInviteTripId(null);
@@ -107,6 +119,7 @@ export default function App() {
 
   const handleSignOut = () => {
     localStorage.removeItem("groupie_user");
+    sessionStorage.setItem("logged_out", "true");
     setCurrentUser(null);
   };
 

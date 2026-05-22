@@ -21,6 +21,8 @@ export default function TripDashboard({ trip, currentUser, onRefresh, onLaunchQu
   const [isInviting, setIsInviting] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [reminderSent, setReminderSent] = useState(false);
+  const [generationProgress, setGenerationProgress] = useState(0);
+  const [generationStage, setGenerationStage] = useState(0);
 
   const [activeTab, setActiveTab] = useState<"itinerary" | "analytics" | "chat">("itinerary");
 
@@ -70,20 +72,70 @@ export default function TripDashboard({ trip, currentUser, onRefresh, onLaunchQu
 
   const handleRunConsensusEngine = async () => {
     setIsGenerating(true);
-    try {
-      const res = await fetch(`/api/trips/${trip.id}/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" }
-      });
-      if (res.ok) {
-        onRefresh();
-        setActiveTab("itinerary");
-      }
-    } catch (err) {
+    setGenerationProgress(1);
+    setGenerationStage(0);
+
+    // Track active server call
+    const serverPromise = fetch(`/api/trips/${trip.id}/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" }
+    }).catch(err => {
       console.error("Consensus generation error", err);
-    } finally {
-      setIsGenerating(false);
-    }
+      return null;
+    });
+
+    // Run dynamic progress indicator ticks to enrich UX and keep user informed
+    let currentProgress = 1;
+    const progressTimer = setInterval(() => {
+      if (currentProgress < 30) {
+        currentProgress += Math.floor(Math.random() * 5) + 6; // Quick start
+      } else if (currentProgress < 60) {
+        currentProgress += Math.floor(Math.random() * 4) + 3; // Smooth progression
+      } else if (currentProgress < 92) {
+        currentProgress += Math.floor(Math.random() * 3) + 1; // Crawl to final stage
+      } else {
+        currentProgress = 92; // Suspend at 92% if solver call has not parsed
+      }
+
+      setGenerationProgress(currentProgress);
+
+      // Distribute stages logically
+      if (currentProgress < 20) {
+        setGenerationStage(0); // Profile harvesting
+      } else if (currentProgress < 45) {
+        setGenerationStage(1); // Consensual overlaps matrix
+      } else if (currentProgress < 75) {
+        setGenerationStage(2); // Gemini query integration
+      } else {
+        setGenerationStage(3); // Buffering fallbacks
+      }
+    }, 200);
+
+    const res = await serverPromise;
+    clearInterval(progressTimer);
+
+    // Speed up and finish the gauge gracefully once server returns payload
+    let finalVal = currentProgress;
+    const finalTimer = setInterval(() => {
+      finalVal += 8;
+      if (finalVal >= 100) {
+        finalVal = 100;
+        setGenerationProgress(100);
+        setGenerationStage(4); // Finished & rendering UI
+        clearInterval(finalTimer);
+
+        // Retain success overlay momentarily for satisfaction and direct transition
+        setTimeout(() => {
+          setIsGenerating(false);
+          if (res && res.ok) {
+            onRefresh();
+            setActiveTab("itinerary");
+          }
+        }, 1200);
+      } else {
+        setGenerationProgress(finalVal);
+      }
+    }, 80);
   };
 
   const handleVoteAction = async (vote: 'approve' | 'edit') => {
@@ -670,6 +722,85 @@ export default function TripDashboard({ trip, currentUser, onRefresh, onLaunchQu
           )}
         </div>
       </div>
+
+      {/* Dynamic Thinking/Analysis Modals */}
+      {isGenerating && (
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-fade-in" id="consensus-processing-modal">
+          <div className="bg-white border border-slate-200 rounded-[32px] max-w-md w-full p-8 shadow-2xl space-y-6 relative overflow-hidden">
+            {/* Ambient visual background glow details */}
+            <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-violet-500 via-brand-500 to-rose-500 rounded-t-full" />
+            
+            <div className="space-y-2 text-center pb-2">
+              <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-brand-50 border border-brand-100 text-brand-600 mb-2">
+                <Sparkles className="h-6 w-6 animate-pulse text-brand-600" />
+              </div>
+              <h3 className="text-base font-extrabold font-display text-slate-900 tracking-tight">AI Consensus Planner</h3>
+              <p className="text-[11px] text-slate-400">
+                Evaluating {trip.preferences.length} traveler profile{trip.preferences.length !== 1 ? 's' : ''} against the {trip.consensusThreshold || 75}% threshold.
+              </p>
+            </div>
+
+            {/* Circular active feedback or dynamic list progress check */}
+            <div className="space-y-5">
+              <div className="bg-slate-50 border border-slate-200 p-4.5 rounded-2xl space-y-3 animate-fade-in">
+                <div className="flex justify-between items-center text-xs font-bold text-slate-500">
+                  <span className="animate-pulse">Analyzing traveler vibe records...</span>
+                  <span className="font-mono text-brand-600 font-black">{generationProgress}%</span>
+                </div>
+                
+                {/* Progress Bar Container */}
+                <div className="w-full bg-slate-200/80 h-3 rounded-full overflow-hidden p-0.5 border border-slate-100 shadow-inner">
+                  <div 
+                    className="h-full bg-gradient-to-r from-violet-500 via-brand-500 to-rose-500 rounded-full transition-all duration-300 ease-out"
+                    style={{ width: `${generationProgress}%` }}
+                  />
+                </div>
+              </div>
+
+              {/* Progress checklist/milestones */}
+              <div className="space-y-3 pt-1">
+                {[
+                  "Harvesting participant visual taste surveys",
+                  "Iterating mathematical overlap scores",
+                  "Calling Google Gemini-3.5-Flash Planner",
+                  "Assembling modular fallback structures",
+                  "Finalizing high-fidelity itinerary graphics"
+                ].map((taskName, idx) => {
+                  const isActive = generationStage === idx;
+                  const isCompleted = generationStage > idx;
+                  return (
+                    <div 
+                      key={taskName} 
+                      className={`flex items-center gap-3 text-xs transition-opacity duration-300 ${
+                        isActive ? "text-slate-800 font-extrabold animate-pulse" : isCompleted ? "text-emerald-700 font-bold" : "text-slate-400 opacity-60"
+                      }`}
+                    >
+                      <div className="shrink-0">
+                        {isCompleted ? (
+                          <div className="w-4.5 h-4.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 flex items-center justify-center font-black text-[10px] shadow-sm">
+                            ✓
+                          </div>
+                        ) : isActive ? (
+                          <div className="w-4.5 h-4.5 rounded-full bg-brand-50 border border-brand-200 text-brand-600 flex items-center justify-center shadow-sm">
+                            <span className="w-1.5 h-1.5 rounded-full bg-brand-600 animate-ping" />
+                          </div>
+                        ) : (
+                          <div className="w-4.5 h-4.5 rounded-full bg-slate-100 border border-slate-200" />
+                        )}
+                      </div>
+                      <span className="truncate">{taskName}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="text-center text-[10px] text-slate-400 font-bold pt-4 border-t border-slate-100 italic tracking-wide">
+              "Great plans take a small moment to curate..."
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -10,27 +10,29 @@ interface LoginViewProps {
 export default function LoginView({ onSignIn, inviteEmail }: LoginViewProps) {
   const [email, setEmail] = useState(inviteEmail || "SuhaimiSainy@gmail.com");
   const [name, setName] = useState(inviteEmail ? "Guest Traveler" : "Suhaimi");
-  const [provider, setProvider] = useState<'google' | 'apple'>("google");
+  const [provider, setProvider] = useState<'google' | 'apple' | 'guest'>("guest");
   const [isLoading, setIsLoading] = useState(false);
   const [errorStr, setErrorStr] = useState<string | null>(null);
 
-  const startSignIn = async (selectedProvider: 'google' | 'apple') => {
+  const startSignIn = async (selectedProvider: 'google' | 'apple' | 'guest') => {
     setIsLoading(true);
     setErrorStr(null);
     setProvider(selectedProvider);
 
     try {
-      // Simulate OAuth network latency and cryptographic handshakes securely
-      await new Promise((resolve) => setTimeout(resolve, 800));
+      // Simulate quick secure signin preparation
+      await new Promise((resolve) => setTimeout(resolve, 600));
 
-      const avatar = `https://api.dicebear.com/7.x/pixel-art/svg?seed=${encodeURIComponent(email || "guest")}`;
+      const finalEmail = email.trim() || `${(name || "traveler").toLowerCase().replace(/\s+/g, "")}@example.com`;
+      const finalName = name.trim() || finalEmail.split("@")[0];
+      const avatar = `https://api.dicebear.com/7.x/pixel-art/svg?seed=${encodeURIComponent(finalEmail)}`;
 
       const res = await fetch("/api/auth/signin", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          email,
-          name: name || email.split("@")[0],
+          email: finalEmail,
+          name: finalName,
           provider: selectedProvider,
           avatar
         })
@@ -126,49 +128,35 @@ export default function LoginView({ onSignIn, inviteEmail }: LoginViewProps) {
             </p>
           )}
 
-          <div className="pt-4 space-y-3">
+          <div className="pt-4 space-y-3.5">
             <button
-              onClick={() => startSignIn("google")}
+              onClick={() => startSignIn("guest")}
               disabled={isLoading}
-              className="w-full flex items-center justify-center gap-3 px-6 py-3.5 border border-slate-200 rounded-2xl font-bold text-slate-700 hover:bg-slate-50 text-sm transition-all focus:outline-none active:scale-[0.98]"
+              className="w-full flex items-center justify-center gap-3 px-6 py-4 bg-brand-600 hover:bg-brand-700 text-white rounded-2xl font-black text-sm transition-all shadow-lg shadow-brand-500/20 hover:shadow-xl focus:outline-none active:scale-[0.98] cursor-pointer"
             >
-              <svg className="h-5 w-5" viewBox="0 0 24 24">
-                <path
-                  fill="#EA4335"
-                  d="M5.266 9.765A7.077 7.077 0 0 1 12 4.909c1.69 0 3.218.6 4.418 1.582L19.91 3C17.782 1.145 15.055 0 12 0 7.354 0 3.373 2.736 1.545 6.727l3.72 3.038z"
-                />
-                <path
-                  fill="#34A853"
-                  d="M16.04 15.345c-1.077.719-2.45 1.145-4.04 1.145a7.077 7.077 0 0 1-6.734-4.855L1.545 14.67C3.373 18.664 7.354 21.4 12 21.4c3.155 0 6.01-1.036 8.182-2.836l-4.14-3.219z"
-                />
-                <path
-                  fill="#4285F4"
-                  d="M23.49 12.273c0-.818-.082-1.609-.236-2.373H12v4.51h6.446c-.282 1.445-1.1 2.673-2.336 3.518l4.14 3.219c2.418-2.227 3.84-5.509 3.84-9.373z"
-                />
-                <path
-                  fill="#FBBC05"
-                  d="M5.266 14.235A7.077 7.077 0 0 1 4.909 12c0-.79.136-1.545.357-2.235L1.545 6.727A11.906 11.906 0 0 0 0 12c0 1.92.455 3.736 1.255 5.373l4.01-3.138z"
-                />
-              </svg>
-              <span>{isLoading && provider === "google" ? "Authenticating securely..." : "Continue with Google"}</span>
+              <Compass className="h-5 w-5 text-white animate-pulse" />
+              <span>{isLoading && provider === "guest" ? "Preparing Sandbox..." : "Enter Travel Dashboard"}</span>
             </button>
 
             <button
-              onClick={() => startSignIn("apple")}
+              type="button"
+              onClick={() => {
+                setEmail("SuhaimiSainy@gmail.com");
+                setName("Suhaimi");
+                setTimeout(() => startSignIn("guest"), 50);
+              }}
               disabled={isLoading}
-              className="w-full flex items-center justify-center gap-3 px-6 py-3.5 bg-slate-900 text-white hover:bg-black rounded-2xl font-bold text-sm transition-all focus:outline-none active:scale-[0.98]"
+              className="w-full flex items-center justify-center gap-2.5 px-6 py-3.5 bg-slate-50 border border-slate-200 hover:bg-slate-100 text-slate-700 rounded-2xl font-bold text-xs transition-all focus:outline-none active:scale-[0.98] cursor-pointer"
             >
-              <svg className="h-5 w-5 fill-current" viewBox="0 0 24 24">
-                <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M15.97 4.17c.66-.81 1.11-1.93.99-3.06-1 .04-2.21.67-2.93 1.49-.62.69-1.16 1.84-1.01 2.96 1.12.09 2.27-.57 2.95-1.39z" />
-              </svg>
-              <span>{isLoading && provider === "apple" ? "Authenticating securely..." : "Continue with Apple"}</span>
+              <Sparkles className="h-4 w-4 text-brand-600" />
+              <span>Load Host Demo Session</span>
             </button>
           </div>
         </div>
 
         <div className="flex items-center justify-center gap-2 text-xs text-slate-400 border-t border-slate-200 pt-6">
           <ShieldCheck className="h-4 w-4 text-emerald-500" />
-          <span>AES-256 Auth Encryption Enabled • No Data Shared</span>
+          <span>Frictionless Access Enabled • No Google or Apple Login Required</span>
         </div>
       </div>
 
