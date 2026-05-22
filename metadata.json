@@ -1,0 +1,6 @@
+{
+  "name": "Groupie",
+  "description": "Collaborative group travel organizer and consensus-driven itinerary planner with visual preference quizzes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
