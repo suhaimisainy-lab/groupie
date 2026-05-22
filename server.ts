@@ -199,14 +199,13 @@ async function initDbFromSupabase() {
     const dbQueryPromise = supabase
       .from("entries")
       .select("*")
-      .eq("author", DB_STORAGE_KEY)
-      .maybeSingle();
+      .eq("author", DB_STORAGE_KEY);
 
     const timeoutPromise = new Promise((_, reject) =>
       setTimeout(() => reject(new Error("Supabase request timed out after 3.5 seconds")), 3500)
     );
 
-    const { data, error } = (await Promise.race([dbQueryPromise, timeoutPromise])) as any;
+    const { data: rows, error } = (await Promise.race([dbQueryPromise, timeoutPromise])) as any;
 
     if (error) {
       console.warn("Supabase database fetch warnings (expected if table is not built yet):", error.message);
@@ -214,7 +213,8 @@ async function initDbFromSupabase() {
       return;
     }
 
-    if (data) {
+    if (rows && rows.length > 0) {
+      const data = rows[0];
       const val = data.user_input;
       if (val) {
         const parsed = typeof val === "string" ? JSON.parse(val) : val;
@@ -662,13 +662,14 @@ function writeDB(data: any) {
   }
 
   if (supabase) {
-    supabase.from("entries").select("id").eq("author", DB_STORAGE_KEY).maybeSingle()
-      .then(({ data: existing, error: selectErr }: any) => {
+    supabase.from("entries").select("id").eq("author", DB_STORAGE_KEY)
+      .then(({ data: rows, error: selectErr }: any) => {
         if (selectErr) {
           console.error("Supabase select query error in writeDB:", selectErr.message);
           return;
         }
         const valString = JSON.stringify(data);
+        const existing = rows && rows.length > 0 ? rows[0] : null;
         if (existing && existing.id) {
           supabase.from("entries").update({ user_input: valString }).eq("id", existing.id)
             .then(({ error }: any) => {

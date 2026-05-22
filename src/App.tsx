@@ -54,14 +54,13 @@ export default function App() {
 
       if (supabase) {
         try {
-          const { data: entryData, error: entryError } = await supabase
+          const { data: entries, error: entryError } = await supabase
             .from("entries")
             .select()
-            .eq("author", `groupie_user_${sessionKey}`)
-            .maybeSingle();
+            .eq("author", `groupie_user_${sessionKey}`);
 
-          if (!entryError && entryData) {
-            const val = entryData.user_input;
+          if (!entryError && entries && entries.length > 0) {
+            const val = entries[0].user_input;
             if (val) {
               storedUser = typeof val === "string" ? JSON.parse(val) : val;
             }
@@ -109,14 +108,13 @@ export default function App() {
         let localTrips: Trip[] = [];
         if (supabase) {
           try {
-            const { data: entryData, error: entryError } = await supabase
+            const { data: entries, error: entryError } = await supabase
               .from("entries")
               .select()
-              .eq("author", localKey)
-              .maybeSingle();
+              .eq("author", localKey);
 
-            if (!entryError && entryData) {
-              const val = entryData.user_input;
+            if (!entryError && entries && entries.length > 0) {
+              const val = entries[0].user_input;
               if (val) {
                 const parsed = typeof val === "string" ? JSON.parse(val) : val;
                 if (Array.isArray(parsed)) {
@@ -152,9 +150,10 @@ export default function App() {
         // 4. Update memory cache and list elements
         setTrips(serverTrips);
         if (supabase) {
-          supabase.from("entries").select("id").eq("author", localKey).maybeSingle()
-            .then(({ data: existing }: any) => {
+          supabase.from("entries").select("id").eq("author", localKey)
+            .then(({ data: entries }: any) => {
               const valStr = JSON.stringify(serverTrips);
+              const existing = entries && entries.length > 0 ? entries[0] : null;
               if (existing && existing.id) {
                 supabase.from("entries").update({ user_input: valStr }).eq("id", existing.id)
                   .then(({ error }) => {
@@ -227,9 +226,10 @@ export default function App() {
 
       if (supabase) {
         const sessionAuthKey = `groupie_user_${sessionKey}`;
-        supabase.from("entries").select("id").eq("author", sessionAuthKey).maybeSingle()
-          .then(({ data: existing }: any) => {
+        supabase.from("entries").select("id").eq("author", sessionAuthKey)
+          .then(({ data: entries }: any) => {
             const valStr = JSON.stringify(currentUser);
+            const existing = entries && entries.length > 0 ? entries[0] : null;
             if (existing && existing.id) {
               supabase.from("entries").update({ user_input: valStr }).eq("id", existing.id)
                 .then(({ error }) => {
